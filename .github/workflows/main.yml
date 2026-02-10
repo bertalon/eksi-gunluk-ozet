@@ -1,0 +1,33 @@
+name: Günlük Ekşi Özeti
+
+on:
+  schedule:
+    # UTC saatine göre çalışır. Türkiye (UTC+3) olduğu için
+    # Sabah 06:00 UTC = 09:00 Türkiye Saati
+    - cron: '0 6 * * *'
+  workflow_dispatch: # İstersen butona basıp elle de çalıştırabilirsin
+
+jobs:
+  calistir:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Depoyu Çek (Checkout)
+      uses: actions/checkout@v3
+
+    - name: Python Kur
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Kütüphaneleri Yükle
+      run: |
+        pip install -r requirements.txt
+
+    - name: Scripti Çalıştır
+      env: # Secret'ları buraya bağlıyoruz
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GMAIL_USER: ${{ secrets.GMAIL_USER }}
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        ALICI_MAIL: ${{ secrets.ALICI_MAIL }}
+      run: python main.py
