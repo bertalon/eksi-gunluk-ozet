@@ -62,32 +62,39 @@ def get_entry_content(url):
 
 def analyze_and_summarize(text, title):
     """
-    İçeriğin 'ilginçlik' seviyesini ölçer. Konu ne olursa olsun (siyaset/futbol dahil),
-    eğer olay absürt, komik veya ufuk açıcıysa seçer.
+    İçeriğin 'değer' seviyesini ölçer.
     """
     if not GEMINI_API_KEY: return "API Key Yok."
 
     try:
-        # --- GURME PROMPT AYARI ---
+        # --- DENGELİ EDİTÖR PROMPTU ---
         prompt = (
-            f"Sen Ekşi Sözlük'ün 'Best Of' editörü Cemil'sin. Görevin Lordum Eren için içerik seçmek.\n"
+            f"Sen Ekşi Sözlük'ün küratörüsün. Görevin Lordum Eren için içerik seçmek.\n"
             f"Başlık: '{title}'\n"
             f"İçerik: '{text}'\n\n"
-            f"GÖREVİN:\n"
-            f"Bu içeriği analiz et ve şu kriterlere göre karar ver:\n"
-            f"1. EĞER: Sıradan, sıkıcı, herhangi bir özelliği olmayan, sadece fanatiklerin kavga ettiği boş bir futbol başlığıysa veya klişe siyasi atışmaysa -> Sadece 'SKIP' yaz.\n"
-            f"2. ANCAK: Konusu futbol veya siyaset olsa bile, içinde çok komik bir gaf, absürt bir olay, şaşırtıcı bir bilgi veya 'yok artık' dedirtecek bir detay varsa -> SEÇ.\n"
-            f"3. GENEL OLARAK: Tuhaf, komik, bilimsel, ufuk açıcı veya aşırı saçma (eğlenceli anlamda) her şeyi seç.\n"
-            f"4. SEÇERSEN: İçeriği 2-3 cümleyle, zeki ve hafif esprili bir dille özetle. Asla 'Selam', 'Merhaba' deme, direkt özeti yaz.\n"
+            f"KARAR MEKANİZMASI:\n"
+            f"Bu içerik şu kategorilerden birine giriyor mu?\n"
+            f"1. FAYDALI: İlginç bir bilgi, web sitesi önerisi, hayat dersi, psikolojik tespit.\n"
+            f"2. EĞLENCELİ: Komik bir anı, absürt bir olay, güldüren bir tespit.\n"
+            f"3. TUHAF: Şaşırtıcı, 'yok artık' dedirten bir detay.\n"
+            f"\n"
+            f"EĞER CEVABIN EVET İSE:\n"
+            f"- İçeriği SEÇ ve 2-3 cümleyle özetle. Özetin tonu zeki ve akıcı olsun.\n"
+            f"\n"
+            f"EĞER İÇERİK ŞUYSA (VE SADECE ŞUYSA) 'SKIP' YAZ:\n"
+            f"- Sadece skor tahmini, fanatik takım kavgası, çok bilindik/sıkıcı günlük siyaset (özelliksiz haber), 'selam', 'bkz' gibi boş içerik.\n"
         )
         
         response = model.generate_content(prompt)
         cleaned_response = response.text.strip()
         
-        if "SKIP" in cleaned_response or len(cleaned_response) < 5:
+        # Model bazen açıklamalı reddeder, içinde SKIP geçiyorsa ele.
+        if "SKIP" in cleaned_response:
             return None
-            
+        
+        # Bazen model "Bu içerik faydalı..." diye analize başlar, onu temizleyip özeti alalım
         return cleaned_response
+            
     except Exception:
         return None
 
@@ -195,3 +202,4 @@ if __name__ == "__main__":
             send_email(selected_entries)
         else:
             print("Bugün 'ilginç' kriterine uyan bir şey çıkmadı.")
+
