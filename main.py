@@ -20,7 +20,7 @@ if not GEMINI_API_KEY:
     print("UYARI: Gemini API Key bulunamadı.")
 else:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- ÖNEMLİ DEĞİŞİKLİK: Cloudscraper Başlatılıyor ---
 # Bu kütüphane Cloudflare korumasını aşmak için tarayıcı taklidi yapar.
@@ -180,3 +180,4 @@ if __name__ == "__main__":
             send_email(report_content)
         else:
             print("Hiçbir içerik alınamadı, mail atılmadı.")
+
