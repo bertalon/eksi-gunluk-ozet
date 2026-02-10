@@ -25,9 +25,10 @@ scraper = cloudscraper.create_scraper(
     browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
 )
 
-def get_debe_list():
-    """Debe listesini çeker. Tarama sayısını artırdım (20) ki elenenlerden sonra elde malzeme kalsın."""
-    url = "https://eksisozluk.com/debe"
+def get_hebe_list():
+    """HEBE (Haftanın En Beğenilenleri) listesini çeker."""
+    # DEĞİŞİKLİK: Debe yerine Hebe
+    url = "https://eksisozluk.com/hebe"
     try:
         response = scraper.get(url)
         if response.status_code != 200: return []
@@ -46,7 +47,8 @@ def get_debe_list():
                 text = caption.get_text(strip=True) if caption else a_tag.get_text(strip=True)
                 titles.append({"title": text, "link": link})
         
-        return titles[:20] 
+        # Haftanın en iyi 10 başlığı yeterli ve temiz olur
+        return titles[:10] 
     except Exception:
         return []
 
@@ -60,87 +62,70 @@ def get_entry_content(url):
     except Exception:
         return None
 
-def analyze_and_summarize(text, title):
+def summarize_content(text, title):
     """
-    İçeriğin 'değer' seviyesini ölçer.
+    Filtreleme YAPMAZ. Sadece verilen içeriği Cemil dilinde özetler.
     """
     if not GEMINI_API_KEY: return "API Key Yok."
 
     try:
-        # --- DENGELİ EDİTÖR PROMPTU ---
+        # --- ÖZETLEYİCİ PROMPT ---
         prompt = (
-            f"Sen Ekşi Sözlük'ün küratörüsün. Görevin Lordum Eren için içerik seçmek.\n"
+            f"Sen kişisel asistan Cemil'sin. Bu metin Ekşi Sözlük'te haftanın en beğenilenlerinden biri.\n"
             f"Başlık: '{title}'\n"
             f"İçerik: '{text}'\n\n"
-            f"KARAR MEKANİZMASI:\n"
-            f"Bu içerik şu kategorilerden birine giriyor mu?\n"
-            f"1. FAYDALI: İlginç bir bilgi, web sitesi önerisi, hayat dersi, psikolojik tespit.\n"
-            f"2. EĞLENCELİ: Komik bir anı, absürt bir olay, güldüren bir tespit.\n"
-            f"3. TUHAF: Şaşırtıcı, 'yok artık' dedirten bir detay.\n"
-            f"\n"
-            f"EĞER CEVABIN EVET İSE:\n"
-            f"- İçeriği SEÇ ve 2-3 cümleyle özetle. Özetin tonu zeki ve akıcı olsun.\n"
-            f"\n"
-            f"EĞER İÇERİK ŞUYSA (VE SADECE ŞUYSA) 'SKIP' YAZ:\n"
-            f"- Sadece skor tahmini, fanatik takım kavgası, çok bilindik/sıkıcı günlük siyaset (özelliksiz haber), 'selam', 'bkz' gibi boş içerik.\n"
+            f"GÖREVİN:\n"
+            f"Bu içeriği Üstadım Eren için 2-3 cümleyle, akıcı ve hafif esprili/zeki bir dille özetle.\n"
+            f"Eğer içerik çok kısaysa veya sadece bir linkse 'İçerik yetersiz' yazma, linkin ne hakkında olduğunu tahmin etmeye çalış veya esprili bir yorum yap.\n"
+            f"Asla 'Selam', 'Merhaba' deme, direkt konuya gir."
         )
         
         response = model.generate_content(prompt)
-        cleaned_response = response.text.strip()
-        
-        # Model bazen açıklamalı reddeder, içinde SKIP geçiyorsa ele.
-        if "SKIP" in cleaned_response:
-            return None
-        
-        # Bazen model "Bu içerik faydalı..." diye analize başlar, onu temizleyip özeti alalım
-        return cleaned_response
+        return response.text.strip()
             
     except Exception:
-        return None
+        return "Yapay zeka bu içeriği yorumlarken takıldı."
 
 def create_html_email(entries):
-    """Modern ve şık bir HTML e-posta tasarımı oluşturur."""
+    """Şık HTML Tasarım."""
     
     html_content = """
     <html>
     <head>
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f6f9fc; margin: 0; padding: 0; }
-            .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow: hidden; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 25px; text-align: center; }
-            .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 1px; }
-            .header p { margin: 5px 0 0; opacity: 0.8; font-size: 14px; }
+            body { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 30px auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+            .header { background: #2c3e50; color: #ffffff; padding: 20px; text-align: center; }
+            .header h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
             .content { padding: 20px; }
-            .entry-card { background: #fdfdfd; border-left: 4px solid #764ba2; margin-bottom: 20px; padding: 15px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
-            .entry-title { color: #2d3748; font-size: 18px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; display: block; text-decoration: none; }
-            .entry-summary { color: #4a5568; font-size: 15px; line-height: 1.6; margin-bottom: 10px; }
-            .read-more { display: inline-block; font-size: 12px; color: #667eea; text-decoration: none; font-weight: 600; }
-            .footer { background: #edf2f7; padding: 15px; text-align: center; color: #718096; font-size: 12px; }
+            .card { border-bottom: 1px solid #eee; padding: 15px 0; }
+            .card:last-child { border-bottom: none; }
+            .title { color: #d35400; font-size: 18px; font-weight: bold; text-decoration: none; display: block; margin-bottom: 5px; }
+            .summary { color: #555; font-size: 14px; line-height: 1.5; }
+            .footer { background: #ecf0f1; padding: 10px; text-align: center; color: #7f8c8d; font-size: 11px; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>GÜNLÜK TUHAFLIK RAPORU</h1>
-                <p>Üstadım, bugün ağa takılanlar bunlar.</p>
+                <h1>HAFTALIK ÖZET (HEBE)</h1>
+                <p>Geçen hafta Ekşi'de kaçırdığın en sağlam olaylar.</p>
             </div>
             <div class="content">
     """
     
     for entry in entries:
         html_content += f"""
-        <div class="entry-card">
-            <a href="{entry['link']}" class="entry-title">{entry['title']}</a>
-            <div class="entry-summary">{entry['summary']}</div>
-            <a href="{entry['link']}" class="read-more">Ekşi'de Oku →</a>
+        <div class="card">
+            <a href="{entry['link']}" class="title">★ {entry['title']}</a>
+            <div class="summary">{entry['summary']}</div>
         </div>
         """
 
     html_content += """
             </div>
             <div class="footer">
-                <p>Otomasyon Kahyanız <b>Cemil</b> tarafından sevgiyle derlendi.</p>
-                <p>Bu mail GitHub Actions sunucularından ateşlenmiştir.</p>
+                <p>Cemil - Dijital Kahyanız</p>
             </div>
         </div>
     </body>
@@ -149,15 +134,13 @@ def create_html_email(entries):
     return html_content
 
 def send_email(entries):
-    """Mail gönderir."""
     if not entries: return
 
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f"Günlük Tuhaflık Raporu 🧠 - {datetime.date.today().strftime('%d.%m.%Y')}"
+    msg['Subject'] = f"Haftanın En İyileri 🏆 - {datetime.date.today().strftime('%d.%m.%Y')}"
     msg['From'] = GMAIL_USER
     msg['To'] = ALICI_MAIL
 
-    # HTML İçeriği Oluştur
     html_body = create_html_email(entries)
     msg.attach(MIMEText(html_body, 'html'))
 
@@ -171,35 +154,31 @@ def send_email(entries):
 
 # --- ANA AKIŞ ---
 if __name__ == "__main__":
-    print("Seçici tarama başlıyor...")
-    debe_items = get_debe_list()
+    print("Haftalık tarama (HEBE) başlıyor...")
+    hebe_items = get_hebe_list()
     
-    selected_entries = []
+    final_entries = []
 
-    if debe_items:
-        for index, item in enumerate(debe_items, 1):
-            print(f"İnceleniyor ({index}): {item['title']}")
+    if hebe_items:
+        for index, item in enumerate(hebe_items, 1):
+            print(f"[{index}] Çekiliyor: {item['title']}")
             
             raw_content = get_entry_content(item['link'])
             
-            if raw_content and len(raw_content) > 100:
-                # Yapay Zeka Analizi
-                summary = analyze_and_summarize(raw_content, item['title'])
-                
-                if summary: 
-                    print(f"--> SEÇİLDİ: {item['title']}")
-                    selected_entries.append({
-                        "title": item['title'],
-                        "summary": summary,
-                        "link": item['link']
-                    })
-                else:
-                    print(f"--> ELENDİ (Sıradan): {item['title']}")
+            if raw_content:
+                # SKIP mekanizması yok, direkt özetletiyoruz
+                summary = summarize_content(raw_content, item['title'])
+                final_entries.append({
+                    "title": item['title'],
+                    "summary": summary,
+                    "link": item['link']
+                })
+            else:
+                print("   -> İçerik boş geldi.")
             
             time.sleep(random.uniform(2, 4))
 
-        if selected_entries:
-            send_email(selected_entries)
+        if final_entries:
+            send_email(final_entries)
         else:
-            print("Bugün 'ilginç' kriterine uyan bir şey çıkmadı.")
-
+            print("Liste oluşturulamadı.")
