@@ -9,129 +9,150 @@ import datetime
 import time
 import random
 
-# --- 1. AYARLAR VE GÜVENLİK ---
+# --- AYARLAR ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GMAIL_USER = os.environ.get("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 ALICI_MAIL = os.environ.get("ALICI_MAIL")
 
 # Gemini Ayarları
-if not GEMINI_API_KEY:
-    print("UYARI: Gemini API Key bulunamadı.")
-else:
+if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- ÖNEMLİ DEĞİŞİKLİK: Cloudscraper Başlatılıyor ---
-# Bu kütüphane Cloudflare korumasını aşmak için tarayıcı taklidi yapar.
+# Cloudscraper (Bot Koruması)
 scraper = cloudscraper.create_scraper(
-    browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
-    }
+    browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
 )
 
 def get_debe_list():
-    """Debe listesini çeker."""
+    """Debe listesini çeker. Tarama sayısını artırdım (20) ki elenenlerden sonra elde malzeme kalsın."""
     url = "https://eksisozluk.com/debe"
     try:
-        # requests.get yerine scraper.get kullanıyoruz
         response = scraper.get(url)
+        if response.status_code != 200: return []
         
-        if response.status_code != 200:
-            print(f"Debe listesine erişilemedi. Hata kodu: {response.status_code}")
-            return []
-
         soup = BeautifulSoup(response.content, 'html.parser')
         titles = []
+        topic_list = soup.find("ul", class_="topic-list") or soup.find("ul", class_="topic-list partial")
         
-        # Debe listesi yapısı
-        # Bazen 'topic-list partial', bazen 'topic-list' olabilir
-        topic_list = soup.find("ul", class_="topic-list")
-        if not topic_list:
-            print("Debe listesi HTML içinde bulunamadı. Yapı değişmiş olabilir.")
-            return []
+        if not topic_list: return []
 
         for item in topic_list.find_all("li"):
             a_tag = item.find("a")
             if a_tag:
                 link = "https://eksisozluk.com" + a_tag['href']
-                # Entry başlığını al (span veya text)
-                if a_tag.find("span", class_="caption"):
-                    text = a_tag.find("span", class_="caption").get_text(strip=True)
-                else:
-                    text = a_tag.get_text(strip=True)
-                    
+                caption = a_tag.find("span", class_="caption")
+                text = caption.get_text(strip=True) if caption else a_tag.get_text(strip=True)
                 titles.append({"title": text, "link": link})
         
-        # İlk 10 başlık
-        return titles[:10]
-    except Exception as e:
-        print(f"Debe çekilirken hata: {e}")
+        return titles[:20] 
+    except Exception:
         return []
 
 def get_entry_content(url):
-    """Entry içeriğini çeker."""
     try:
-        # Ekşi Sözlük bazen linklere parametre eklenmezse farklı davranır
-        if "?" not in url:
-            url += "?a=search" # Rastgele bir parametre bot algısını kırabilir
-            
+        if "?" not in url: url += "?a=search"
         response = scraper.get(url)
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # İçeriği bulmaya çalış
         content_div = soup.find("div", class_="content")
-        
-        if content_div:
-            text = content_div.get_text(separator=" ", strip=True)
-            return text
-        else:
-            # Eğer content yoksa, belki bot korumasına takıldık, log basalım
-            print(f"İçerik çekilemedi (HTML Title): {soup.title.string if soup.title else 'Başlık Yok'}")
-            return None
-    except Exception as e:
-        print(f"Entry detay hatası: {e}")
+        return content_div.get_text(separator=" ", strip=True) if content_div else None
+    except Exception:
         return None
 
-def summarize_text(text, title):
-    """Gemini ile özetler."""
-    if not GEMINI_API_KEY:
-        return text[:300] + "... (API Key olmadığı için özetlenmedi)"
-        
+def analyze_and_summarize(text, title):
+    """
+    İçeriğin 'ilginçlik' seviyesini ölçer. Konu ne olursa olsun (siyaset/futbol dahil),
+    eğer olay absürt, komik veya ufuk açıcıysa seçer.
+    """
+    if not GEMINI_API_KEY: return "API Key Yok."
+
     try:
+        # --- GURME PROMPT AYARI ---
         prompt = (
-            f"Sen benim kişisel asistanım Cemil'sin. Hitabın saygılı ama zeki olsun.\n"
-            f"Aşağıdaki Ekşi Sözlük entry'sini ('{title}') Lordum Eren için oku.\n"
-            f"Gereksiz detayları at, ana fikri 2 cümleyle özetle.\n"
-            f"Entry Metni:\n\n{text}"
+            f"Sen Ekşi Sözlük'ün 'Best Of' editörü Cemil'sin. Görevin Lordum Eren için içerik seçmek.\n"
+            f"Başlık: '{title}'\n"
+            f"İçerik: '{text}'\n\n"
+            f"GÖREVİN:\n"
+            f"Bu içeriği analiz et ve şu kriterlere göre karar ver:\n"
+            f"1. EĞER: Sıradan, sıkıcı, herhangi bir özelliği olmayan, sadece fanatiklerin kavga ettiği boş bir futbol başlığıysa veya klişe siyasi atışmaysa -> Sadece 'SKIP' yaz.\n"
+            f"2. ANCAK: Konusu futbol veya siyaset olsa bile, içinde çok komik bir gaf, absürt bir olay, şaşırtıcı bir bilgi veya 'yok artık' dedirtecek bir detay varsa -> SEÇ.\n"
+            f"3. GENEL OLARAK: Tuhaf, komik, bilimsel, ufuk açıcı veya aşırı saçma (eğlenceli anlamda) her şeyi seç.\n"
+            f"4. SEÇERSEN: İçeriği 2-3 cümleyle, zeki ve hafif esprili bir dille özetle. Asla 'Selam', 'Merhaba' deme, direkt özeti yaz.\n"
         )
+        
         response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Özetlenemedi: {e}"
+        cleaned_response = response.text.strip()
+        
+        if "SKIP" in cleaned_response or len(cleaned_response) < 5:
+            return None
+            
+        return cleaned_response
+    except Exception:
+        return None
 
-def send_email(report_body):
+def create_html_email(entries):
+    """Modern ve şık bir HTML e-posta tasarımı oluşturur."""
+    
+    html_content = """
+    <html>
+    <head>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f6f9fc; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow: hidden; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 25px; text-align: center; }
+            .header h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: 1px; }
+            .header p { margin: 5px 0 0; opacity: 0.8; font-size: 14px; }
+            .content { padding: 20px; }
+            .entry-card { background: #fdfdfd; border-left: 4px solid #764ba2; margin-bottom: 20px; padding: 15px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
+            .entry-title { color: #2d3748; font-size: 18px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; display: block; text-decoration: none; }
+            .entry-summary { color: #4a5568; font-size: 15px; line-height: 1.6; margin-bottom: 10px; }
+            .read-more { display: inline-block; font-size: 12px; color: #667eea; text-decoration: none; font-weight: 600; }
+            .footer { background: #edf2f7; padding: 15px; text-align: center; color: #718096; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>GÜNLÜK TUHAFLIK RAPORU</h1>
+                <p>Üstadım, bugün ağa takılanlar bunlar.</p>
+            </div>
+            <div class="content">
+    """
+    
+    for entry in entries:
+        html_content += f"""
+        <div class="entry-card">
+            <a href="{entry['link']}" class="entry-title">{entry['title']}</a>
+            <div class="entry-summary">{entry['summary']}</div>
+            <a href="{entry['link']}" class="read-more">Ekşi'de Oku →</a>
+        </div>
+        """
+
+    html_content += """
+            </div>
+            <div class="footer">
+                <p>Otomasyon Kahyanız <b>Cemil</b> tarafından sevgiyle derlendi.</p>
+                <p>Bu mail GitHub Actions sunucularından ateşlenmiştir.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
+def send_email(entries):
     """Mail gönderir."""
-    if not report_body:
-        print("Rapor boş, mail atılmıyor.")
-        return
+    if not entries: return
 
-    msg = MIMEMultipart()
-    msg['Subject'] = f"Gunluk Eksi Ozeti - {datetime.date.today().strftime('%d.%m.%Y')}"
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f"Günlük Tuhaflık Raporu 🧠 - {datetime.date.today().strftime('%d.%m.%Y')}"
     msg['From'] = GMAIL_USER
     msg['To'] = ALICI_MAIL
 
-    full_text = (
-        "Günaydın Lordum,\n\n"
-        "Bugün güvenlik duvarlarını aşıp içeri sızmayı başardım. "
-        "İşte Ekşi Sözlük'te dün en çok konuşulanlar:\n\n"
-        f"{report_body}\n\n"
-        "Emirlerinize amadeyim,\nCemil"
-    )
-
-    msg.attach(MIMEText(full_text, 'plain'))
+    # HTML İçeriği Oluştur
+    html_body = create_html_email(entries)
+    msg.attach(MIMEText(html_body, 'html'))
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
@@ -143,41 +164,34 @@ def send_email(report_body):
 
 # --- ANA AKIŞ ---
 if __name__ == "__main__":
-    print("Görev başladı...")
+    print("Seçici tarama başlıyor...")
     debe_items = get_debe_list()
     
-    report_content = ""
-    basarili_sayisi = 0
+    selected_entries = []
 
-    if not debe_items:
-        print("Liste boş döndü, operasyon iptal.")
-        # Kendine hata maili atabilirsin istersen buraya
-    else:
+    if debe_items:
         for index, item in enumerate(debe_items, 1):
-            print(f"İşleniyor ({index}/10): {item['title']}")
+            print(f"İnceleniyor ({index}): {item['title']}")
             
             raw_content = get_entry_content(item['link'])
             
-            if raw_content:
-                # Çok kısa içerikleri özetleme
-                if len(raw_content) > 200:
-                    summary = summarize_text(raw_content, item['title'])
-                else:
-                    summary = f"Kısa Not: {raw_content}"
+            if raw_content and len(raw_content) > 100:
+                # Yapay Zeka Analizi
+                summary = analyze_and_summarize(raw_content, item['title'])
                 
-                report_content += f"► {item['title'].upper()}\n"
-                report_content += f"{summary}\n"
-                report_content += f"Link: {item['link']}\n"
-                report_content += "-" * 35 + "\n\n"
-                basarili_sayisi += 1
-            else:
-                report_content += f"► {item['title']} - (Erişim Engeli/Silinmiş)\n\n"
+                if summary: 
+                    print(f"--> SEÇİLDİ: {item['title']}")
+                    selected_entries.append({
+                        "title": item['title'],
+                        "summary": summary,
+                        "link": item['link']
+                    })
+                else:
+                    print(f"--> ELENDİ (Sıradan): {item['title']}")
+            
+            time.sleep(random.uniform(2, 4))
 
-            # Çok hızlı istek atarsak yine banlanırız, biraz bekle
-            time.sleep(random.uniform(3, 6))
-
-        if basarili_sayisi > 0:
-            send_email(report_content)
+        if selected_entries:
+            send_email(selected_entries)
         else:
-            print("Hiçbir içerik alınamadı, mail atılmadı.")
-
+            print("Bugün 'ilginç' kriterine uyan bir şey çıkmadı.")
